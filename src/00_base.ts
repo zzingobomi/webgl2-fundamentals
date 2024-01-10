@@ -1,6 +1,6 @@
 import * as webglUtils from "./webgl-utils";
-import vertexShaderSource from "./glsl/vertexShader.glsl";
-import fragmentShaderSource from "./glsl/fragmentShader.glsl";
+import vertexShaderSource from "./glsl/00/vertexShader.glsl";
+import fragmentShaderSource from "./glsl/00/fragmentShader.glsl";
 
 function main() {
   const canvas = document.querySelector("#c") as HTMLCanvasElement;
