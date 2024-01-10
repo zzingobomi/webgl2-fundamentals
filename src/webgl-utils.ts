@@ -72,8 +72,8 @@ export function loadShader(
 export function createProgram(
   gl: WebGLRenderingContext,
   shaders: WebGLShader[],
-  opt_attribs: string[],
-  opt_locations: number[]
+  opt_attribs?: string[],
+  opt_locations?: number[]
 ): WebGLProgram {
   const program = gl.createProgram();
   shaders.forEach(function (shader) {
@@ -122,7 +122,7 @@ export function createProgram(
 export function createShaderFromScript(
   gl: WebGLRenderingContext,
   scriptId: string,
-  opt_shaderType: number
+  opt_shaderType?: number
 ): WebGLShader {
   let shaderSource = "";
   let shaderType;
@@ -169,8 +169,60 @@ const defaultShaderType = ["VERTEX_SHADER", "FRAGMENT_SHADER"];
 export function createProgramFromScripts(
   gl: WebGLRenderingContext,
   shaderScriptIds: string[],
-  opt_attribs: string[],
-  opt_locations: number[]
+  opt_attribs?: string[],
+  opt_locations?: number[]
 ): WebGLProgram {
-  return null;
+  const shaders = [];
+  for (let ii = 0; ii < shaderScriptIds.length; ++ii) {
+    shaders.push(
+      createShaderFromScript(gl, shaderScriptIds[ii], gl[defaultShaderType[ii]])
+    );
+  }
+  return createProgram(gl, shaders, opt_attribs, opt_locations);
+}
+
+/**
+ * Creates a program from 2 sources.
+ *
+ * @param {WebGLRenderingContext} gl The WebGLRenderingContext
+ *        to use.
+ * @param {string[]} shaderSourcess Array of sources for the
+ *        shaders. The first is assumed to be the vertex shader,
+ *        the second the fragment shader.
+ * @param {string[]} [opt_attribs] An array of attribs names. Locations will be assigned by index if not passed in
+ * @param {number[]} [opt_locations] The locations for the. A parallel array to opt_attribs letting you assign locations.
+ * @return {WebGLProgram} The created program.
+ */
+export function createProgramFromSources(
+  gl: WebGLRenderingContext,
+  shaderSources: string[],
+  opt_attribs?: string[],
+  opt_locations?: number[]
+): WebGLProgram {
+  const shaders = [];
+  for (let ii = 0; ii < shaderSources.length; ++ii) {
+    shaders.push(loadShader(gl, shaderSources[ii], gl[defaultShaderType[ii]]));
+  }
+  return createProgram(gl, shaders, opt_attribs, opt_locations);
+}
+
+/**
+ * Resize a canvas to match the size its displayed.
+ * @param canvas The canvas to resize.
+ * @param multiplier amount to multiply by.
+ *    Pass in window.devicePixelRatio for native pixels.
+ * @return {boolean} true if the canvas was resized.
+ */
+export function resizeCanvasToDisplaySize(
+  canvas: HTMLCanvasElement,
+  multiplier: number = 1
+): boolean {
+  const width = (canvas.clientWidth * multiplier) | 0;
+  const height = (canvas.clientHeight * multiplier) | 0;
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+    return true;
+  }
+  return false;
 }
