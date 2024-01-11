@@ -6,6 +6,7 @@
     "sourceMap": true,
     "outDir": "./dist",
     "strict": false,
+    "allowJs": true,
     "experimentalDecorators": true,
     "esModuleInterop": true,
     "moduleResolution": "node",

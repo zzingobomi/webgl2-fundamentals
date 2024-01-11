@@ -5,7 +5,7 @@ const CopyPlugin = require("copy-webpack-plugin");
 const Dotenv = require("dotenv-webpack");
 
 module.exports = {
-  entry: path.resolve(appDirectory, "src/01_image.ts"),
+  entry: path.resolve(appDirectory, "src/02_2dmatrix.ts"),
   output: {
     filename: "js/bundle.js",
     clean: true,
