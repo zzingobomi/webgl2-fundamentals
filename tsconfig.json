@@ -11,13 +11,14 @@
     "esModuleInterop": true,
     "moduleResolution": "node",
     "types": ["node"],
-    "typeRoots": ["node_modules/@types"],
+    "typeRoots": ["node_modules/@types", "src/twgl"],
     "baseUrl": ".",
     "lib": ["ES2020", "DOM"],
     "paths": {
-      "@src/*": ["src/*"]
+      "@src/*": ["src/*"],
+      "twgl": ["src/twgl/index.js"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.js"],
   "exclude": ["node_modules", "**/*.spec.js"]
 }
