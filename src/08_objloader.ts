@@ -187,6 +187,15 @@ function parseMTL(text: string) {
     Ke: function (parts: string[]) {
       material.emissive = parts.map(parseFloat);
     },
+    map_Kd: function (parts: string[], unparsedArgs: string) {
+      material.diffuseMap = parseMapArgs(unparsedArgs);
+    },
+    map_Ns: function (parts: string[], unparsedArgs: string) {
+      material.specularMap = parseMapArgs(unparsedArgs);
+    },
+    map_Bump: function (parts: string[], unparsedArgs: string) {
+      material.normalMap = parseMapArgs(unparsedArgs);
+    },
     Ni: function (parts: string[]) {
       material.opticalDensity = parseFloat(parts[0]);
     },
@@ -222,6 +231,74 @@ function parseMTL(text: string) {
   return materials;
 }
 
+function makeIndexIterator(indices) {
+  let ndx = 0;
+  const fn = () => indices[ndx++];
+  fn.reset = () => {
+    ndx = 0;
+  };
+  fn.numElements = indices.length;
+  return fn;
+}
+
+function makeUnindexedIterator(positions) {
+  let ndx = 0;
+  const fn = () => ndx++;
+  fn.reset = () => {
+    ndx = 0;
+  };
+  fn.numElements = positions.length / 3;
+  return fn;
+}
+
+const subtractVector2 = (a, b) => a.map((v, ndx) => v - b[ndx]);
+
+function generateTangents(position, texcoord, indices?) {
+  const getNextIndex = indices
+    ? makeIndexIterator(indices)
+    : makeUnindexedIterator(position);
+  const numFaceVerts = getNextIndex.numElements;
+  const numFaces = numFaceVerts / 3;
+
+  const tangents = [];
+  for (let i = 0; i < numFaces; ++i) {
+    const n1 = getNextIndex();
+    const n2 = getNextIndex();
+    const n3 = getNextIndex();
+
+    const p1 = position.slice(n1 * 3, n1 * 3 + 3);
+    const p2 = position.slice(n2 * 3, n2 * 3 + 3);
+    const p3 = position.slice(n3 * 3, n3 * 3 + 3);
+
+    const uv1 = texcoord.slice(n1 * 2, n1 * 2 + 2);
+    const uv2 = texcoord.slice(n2 * 2, n2 * 2 + 2);
+    const uv3 = texcoord.slice(n3 * 2, n3 * 2 + 2);
+
+    const dp12 = twgl.v3.subtract(p2, p1);
+    const dp13 = twgl.v3.subtract(p3, p1);
+
+    const duv12 = subtractVector2(uv2, uv1);
+    const duv13 = subtractVector2(uv3, uv1);
+
+    const f = 1.0 / (duv12[0] * duv13[1] - duv13[0] * duv12[1]);
+    const tangent = Number.isFinite(f)
+      ? twgl.v3.normalize(
+          twgl.v3.mulScalar(
+            twgl.v3.subtract(
+              twgl.v3.mulScalar(dp12, duv13[1]),
+              twgl.v3.mulScalar(dp13, duv12[1])
+            ),
+            f
+          )
+        )
+      : [1, 0, 0];
+
+    tangents.push(...tangent, ...tangent, ...tangent);
+  }
+
+  return tangents;
+}
+
 async function main() {
   const canvas = document.querySelector("#canvas") as HTMLCanvasElement;
   const gl = canvas.getContext("webgl2");
@@ -238,7 +315,7 @@ async function main() {
     fragmentShaderSource,
   ]);
 
-  const objHref = "/chair.obj";
+  const objHref = "/windmill.obj";
   const response = await fetch(objHref);
   const text = await response.text();
   const obj = parseOBJ(text);
@@ -251,6 +328,43 @@ async function main() {
     })
   );
   const materials = parseMTL(matTexts.join("\n"));
+
+  const textures = {
+    defaultWhite: twgl.createTexture(gl, { src: [255, 255, 255, 255] }),
+    defaultNormal: twgl.createTexture(gl, { src: [127, 127, 255, 0] }),
+  };
+
+  // load texture for materials
+  for (const material of Object.values(materials)) {
+    Object.entries(material)
+      .filter(([key]) => key.endsWith("Map"))
+      .forEach(([key, filename]) => {
+        let texture = textures[filename];
+        if (!texture) {
+          const textureHref = new URL(filename, baseHref).href;
+          texture = twgl.createTexture(gl, { src: textureHref, flipY: 1 });
+          textures[filename] = texture;
+        }
+        material[key] = texture;
+      });
+  }
+
+  // hack the materials so we can see the specular map
+  Object.values(materials).forEach((m: any) => {
+    m.shininess = 25;
+    m.specular = [3, 2, 1];
+  });
+
+  const defaultMaterial = {
+    diffuse: [1, 1, 1],
+    diffuseMap: textures.defaultWhite,
+    normalMap: textures.defaultNormal,
+    ambient: [0, 0, 0],
+    specular: [1, 1, 1],
+    specularMap: textures.defaultWhite,
+    shininess: 400,
+    opacity: 1,
+  };
 
   const parts = obj.geometries.map(({ material, data }) => {
     // Because data is just named arrays like this
@@ -276,6 +390,22 @@ async function main() {
       data.color = { value: [1, 1, 1, 1] };
     }
 
+    // generate tangents if we have the data to do so.
+    if (data.texcoord && data.normal) {
+      data.tangent = generateTangents(data.position, data.texcoord);
+    } else {
+      data.tangent = { value: [1, 0, 0] };
+    }
+
+    if (!data.texcoord) {
+      data.texcoord = { value: [0, 0] };
+    }
+
+    if (!data.normal) {
+      // we probably want to generate normals if there are none
+      data.normal = { value: [0, 0, 1] };
+    }
+
     // create a buffer for each array by calling
     // gl.createBuffer, gl.bindBuffer, gl.bufferData
     const bufferInfo = twgl.createBufferInfoFromArrays(gl, data);
@@ -283,7 +413,10 @@ async function main() {
     // then gl.bindBuffer, gl.enableVertexAttribArray, and gl.vertexAttribPointer for each attribute
     const vao = twgl.createVAOFromBufferInfo(gl, meshProgramInfo, bufferInfo);
     return {
-      material: materials[material],
+      material: {
+        ...defaultMaterial,
+        ...materials[material],
+      },
       bufferInfo,
       vao,
     };
@@ -329,7 +462,7 @@ async function main() {
   const cameraTarget = [0, 0, 0];
   // figure out how far away to move the camera so we can likely
   // see the object.
-  const radius = twgl.v3.length(range) * 1.2;
+  const radius = twgl.v3.length(range) * 0.5;
   const cameraPosition = twgl.v3.add(cameraTarget, [0, 0, radius]);
   // Set zNear and zFar to something hopefully appropriate
   // for the size of this object.
@@ -351,7 +484,7 @@ async function main() {
       (gl.canvas as HTMLCanvasElement).height
     );
     gl.enable(gl.DEPTH_TEST);
-    gl.enable(gl.CULL_FACE);
+    //gl.enable(gl.CULL_FACE);
 
     const fieldOfViewRadians = degToRad(60);
     const aspect =
