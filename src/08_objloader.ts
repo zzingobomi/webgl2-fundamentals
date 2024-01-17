@@ -8,15 +8,17 @@ function parseOBJ(text: string) {
   const objPositions = [[0, 0, 0]];
   const objTexcoords = [[0, 0]];
   const objNormals = [[0, 0, 0]];
+  const objColors = [[0, 0, 0]];
 
   // same order as `f` indices
-  const objVertexData = [objPositions, objTexcoords, objNormals];
+  const objVertexData = [objPositions, objTexcoords, objNormals, objColors];
 
   // same order as `f` indices
-  let webglVertexData: [number[], number[], number[]] = [
+  let webglVertexData: [number[], number[], number[], number[]] = [
     [], // positions
     [], // texcoords
     [], // normals
+    [], // colors
   ];
 
   const materialLibs = [];
@@ -41,7 +43,8 @@ function parseOBJ(text: string) {
       const position = [];
       const texcoord = [];
       const normal = [];
-      webglVertexData = [position, texcoord, normal];
+      const color = [];
+      webglVertexData = [position, texcoord, normal, color];
       geometry = {
         object,
         groups,
@@ -50,6 +53,7 @@ function parseOBJ(text: string) {
           position,
           texcoord,
           normal,
+          color,
         },
       };
       geometries.push(geometry);
@@ -65,12 +69,23 @@ function parseOBJ(text: string) {
       const objIndex = parseInt(objIndexStr);
       const index = objIndex + (objIndex >= 0 ? 0 : objVertexData[i].length);
       webglVertexData[i].push(...objVertexData[i][index]);
+      // if this is the position index (index 0) and we parsed
+      // vertex colors then copy the vertex colors to the webgl vertex color data
+      if (i === 0 && objColors.length > 1) {
+        geometry.data.color.push(...objColors[index]);
+      }
     });
   }
 
   const keywords = {
     v: function (parts: string[]) {
-      objPositions.push(parts.map(parseFloat));
+      // if there are more than 3 values here they are vertex colors
+      if (parts.length > 3) {
+        objPositions.push(parts.slice(0, 3).map(parseFloat));
+        objColors.push(parts.slice(3).map(parseFloat));
+      } else {
+        objPositions.push(parts.map(parseFloat));
+      }
     },
     vn: function (parts: string[]) {
       objNormals.push(parts.map(parseFloat));
@@ -143,6 +158,70 @@ function parseOBJ(text: string) {
   };
 }
 
+function parseMapArgs(unparsedArgs: string) {
+  // TODO: handle options
+  return unparsedArgs;
+}
+
+function parseMTL(text: string) {
+  const materials = {};
+  let material;
+
+  const keywords = {
+    newmtl: function (parts: string[], unparsedArgs: string) {
+      material = {};
+      materials[unparsedArgs] = material;
+    },
+    Ns: function (parts: string[]) {
+      material.shininess = parseFloat(parts[0]);
+    },
+    Ka: function (parts: string[]) {
+      material.ambient = parts.map(parseFloat);
+    },
+    Kd: function (parts: string[]) {
+      material.diffuse = parts.map(parseFloat);
+    },
+    Ks: function (parts: string[]) {
+      material.specular = parts.map(parseFloat);
+    },
+    Ke: function (parts: string[]) {
+      material.emissive = parts.map(parseFloat);
+    },
+    Ni: function (parts: string[]) {
+      material.opticalDensity = parseFloat(parts[0]);
+    },
+    d: function (parts: string[]) {
+      material.opacity = parseFloat(parts[0]);
+    },
+    illum: function (parts: string[]) {
+      material.illum = parseInt(parts[0]);
+    },
+  };
+
+  const keywordRE = /(\w*)(?: )*(.*)/;
+  const lines = text.split("\n");
+  for (let lineNo = 0; lineNo < lines.length; ++lineNo) {
+    const line = lines[lineNo].trim();
+    if (line === "" || line.startsWith("#")) {
+      continue;
+    }
+    const m = keywordRE.exec(line);
+    if (!m) {
+      continue;
+    }
+    const [, keyword, unparsedArgs] = m;
+    const parts = line.split(/\s+/).slice(1);
+    const handler = keywords[keyword];
+    if (!handler) {
+      console.warn("unhandled keyword:", keyword); // eslint-disable-line no-console
+      continue;
+    }
+    handler(parts, unparsedArgs);
+  }
+
+  return materials;
+}
+
 async function main() {
   const canvas = document.querySelector("#canvas") as HTMLCanvasElement;
   const gl = canvas.getContext("webgl2");
@@ -159,11 +238,21 @@ async function main() {
     fragmentShaderSource,
   ]);
 
-  const response = await fetch("/chair.obj");
+  const objHref = "/chair.obj";
+  const response = await fetch(objHref);
   const text = await response.text();
   const obj = parseOBJ(text);
+  const baseHref = new URL(objHref, window.location.href);
+  const matTexts = await Promise.all(
+    obj.materialLibs.map(async (filename) => {
+      const matHref = new URL(filename, baseHref).href;
+      const response = await fetch(matHref);
+      return await response.text();
+    })
+  );
+  const materials = parseMTL(matTexts.join("\n"));
 
-  const parts = obj.geometries.map(({ data }) => {
+  const parts = obj.geometries.map(({ material, data }) => {
     // Because data is just named arrays like this
     //
     // {
@@ -176,6 +265,17 @@ async function main() {
     // shader we can pass it directly into `createBufferInfoFromArrays`
     // from the article "less code more fun".
 
+    if (data.color) {
+      if (data.position.length === data.color.length) {
+        // it's 3. The our helper library assumes 4 so we need
+        // to tell it there are only 3.
+        data.color = { numComponents: 3, data: data.color };
+      }
+    } else {
+      // there are no vertex colors so just use constant white
+      data.color = { value: [1, 1, 1, 1] };
+    }
+
     // create a buffer for each array by calling
     // gl.createBuffer, gl.bindBuffer, gl.bufferData
     const bufferInfo = twgl.createBufferInfoFromArrays(gl, data);
@@ -183,9 +283,7 @@ async function main() {
     // then gl.bindBuffer, gl.enableVertexAttribArray, and gl.vertexAttribPointer for each attribute
     const vao = twgl.createVAOFromBufferInfo(gl, meshProgramInfo, bufferInfo);
     return {
-      material: {
-        u_diffuse: [Math.random(), Math.random(), Math.random(), 1],
-      },
+      material: materials[material],
       bufferInfo,
       vao,
     };
@@ -274,6 +372,7 @@ async function main() {
       u_lightDirection: twgl.v3.normalize([-1, 3, 5]),
       u_view: view,
       u_projection: projection,
+      u_viewWorldPosition: cameraPosition,
     };
 
     gl.useProgram(meshProgramInfo.program);
@@ -289,7 +388,7 @@ async function main() {
       gl.bindVertexArray(vao);
       twgl.setUniforms(meshProgramInfo, {
         u_world,
-        u_diffuse: material.u_diffuse,
+        ...material,
       });
       twgl.drawBufferInfo(gl, bufferInfo);
     }
