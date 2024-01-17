@@ -5,7 +5,7 @@ const CopyPlugin = require("copy-webpack-plugin");
 const Dotenv = require("dotenv-webpack");
 
 module.exports = {
-  entry: path.resolve(appDirectory, "src/07_twgl.ts"),
+  entry: path.resolve(appDirectory, "src/08_objloader.ts"),
   output: {
     filename: "js/bundle.js",
     clean: true,
